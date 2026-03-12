@@ -1,0 +1,13 @@
+streamlit==1.12.0
+pandas
+numpy
+requests
+beautifulsoup4
+langchain
+langchain-community
+langchain-google-genai
+chromadb
+pypdf
+python-dotenv
+openpyxl
+plotly
