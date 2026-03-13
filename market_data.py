@@ -3,7 +3,7 @@ import numpy as np
 import streamlit as st
 import os
 
-@st.cache(ttl=3600, suppress_st_warning=True)
+@st.cache_data(ttl=3600)
 def load_kap_data(file_source):
     """내장된 샘플 경로(str) 또는 업로드된 파일(객체)을 모두 처리하여 읽어옵니다. (CSV, XLSX 지원)"""
     if file_source is None:

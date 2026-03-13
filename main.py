@@ -32,7 +32,7 @@ if step == "Step 1: 시장 환경 설정":
     st.title("Step 1: 현재 시장 커브 확인")
     
     # 💡 엑셀 데이터 소스 선택 옵션!
-    data_source = st.radio("시장 데이터 소스를 선택하세요:", ["기본 샘플 파일 사용 (한국자산평가 최신 기준)", "직접 Excel/CSV 파일 업로드"])
+    data_source = st.radio("시장 데이터 소스를 선택하세요:", ["기본 샘플 파일 사용 (202560312 기준)", "직접 Excel/CSV 파일 업로드"])
     
     file_to_process = None
     

@@ -13,7 +13,7 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
-from langchain.chains import RetrievalQA
+
 
 load_dotenv()
 
@@ -79,7 +79,6 @@ def extract_financials_via_rag(*args):
                 
                 retriever = vectorstore.as_retriever(search_kwargs={"k": 5}) 
                 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-                qa_chain = RetrievalQA.from_chain_type(llm=llm, chain_type="stuff", retriever=retriever)
 
                 query = """
                 당신은 숙련된 퀀트 애널리스트입니다. 문서 전체를 뒤져 다음 재무 지표를 찾으세요.
@@ -98,8 +97,15 @@ def extract_financials_via_rag(*args):
                     "부채비율(%)": 0
                 }
                 """
-                response = qa_chain.invoke(query)
-                result_text = response.get("result", "") if isinstance(response, dict) else response
+                
+                # 💡 배포 환경에서도 절대 에러 안 나는 직관적 RAG 방식
+                docs = retriever.invoke(query) # PDF에서 관련된 내용 5개 찾아오기
+                context_text = "\n\n".join([doc.page_content for doc in docs]) # 텍스트로 합치기
+
+                final_prompt = f"다음 [참고 문서]를 바탕으로 [질문]에 답하세요.\n\n[참고 문서]\n{context_text}\n\n[질문]\n{query}"
+                response = llm.invoke(final_prompt)
+                
+                result_text = response.content
                 
                 json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
                 if json_match:
