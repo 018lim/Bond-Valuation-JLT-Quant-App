@@ -24,7 +24,7 @@ def extract_financials_via_rag(*args):
     pdf_files_to_process = []
     
     if data_source == "기본 샘플 파일 사용 (현대차 사업보고서)":
-        st.info("💡 앱에 내장된 샘플 파일(`2025_hyundai.pdf`)을 분석합니다. (샘플 분석 시 연간 수치를 우선으로 찾습니다)")
+        st.info("💡 앱에 내장된 샘플 파일(`2025_hyundai.pdf`)을 분석합니다. 연간 이자비용은 572, 부채 비율은 189를 입력하세요")
         if os.path.exists("2025_hyundai.pdf"):
             pdf_files_to_process = ["2025_hyundai.pdf"]
         else:
