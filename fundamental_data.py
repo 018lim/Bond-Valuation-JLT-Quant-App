@@ -14,28 +14,26 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings, ChatGoogleGenerativeAI
 from langchain_community.vectorstores import Chroma
 
-
 load_dotenv()
 
 def extract_financials_via_rag(*args):
     st.markdown("### 📂 재무 데이터 업로드 (Gemini RAG)")
     
-    # 💡 데이터 소스 선택 라디오 버튼 추가
     data_source = st.radio("PDF 데이터 소스를 선택하세요:", ["기본 샘플 파일 사용 (현대차 사업보고서)", "직접 PDF 파일 업로드"])
     
     pdf_files_to_process = []
     
     if data_source == "기본 샘플 파일 사용 (현대차 사업보고서)":
-        st.info("💡 앱에 내장된 샘플 파일(`2025_hyundai.pdf`)을 분석합니다. 연간 이자비용은 572, 부채 비율은 189를 입력하세요")
+        st.info("💡 앱에 내장된 샘플 파일(`2025_hyundai.pdf`)을 분석합니다. (샘플 분석 시 연간 수치를 우선으로 찾습니다)")
         if os.path.exists("2025_hyundai.pdf"):
-            pdf_files_to_process = ["2025_hyundai.pdf"] # 파일 경로 문자열을 리스트에 담음
+            pdf_files_to_process = ["2025_hyundai.pdf"]
         else:
-            st.error("⚠️ 폴더에 '2025_hyundai.pdf' 파일이 없습니다! 파일을 넣어주세요.")
+            st.error("⚠️ 폴더에 '2025_hyundai.pdf' 파일이 없습니다!")
             
     else:
         uploaded_files = st.file_uploader("📄 사업보고서 및 IR 자료 업로드 (여러 개 가능)", type=["pdf"], accept_multiple_files=True)
         if uploaded_files:
-            pdf_files_to_process = uploaded_files # 업로드된 파일 객체들을 리스트에 담음
+            pdf_files_to_process = uploaded_files
     
     if "analyze_started" not in st.session_state:
         st.session_state["analyze_started"] = False
@@ -50,16 +48,10 @@ def extract_financials_via_rag(*args):
     if st.session_state["analyze_started"]:
         if st.session_state.get("rag_df") is None:
             with st.spinner("AI가 PDF에서 연간 재무제표를 정밀 검색 중입니다..."):
-                final_data = {
-                    "영업이익": 0.0,
-                    "이자비용": 0.0,
-                    "이자보상배율(배)": 0.0,
-                    "부채비율(%)": 0.0
-                }
+                final_data = {"영업이익": 0.0, "이자비용": 0.0, "이자보상배율(배)": 0.0, "부채비율(%)": 0.0}
                 
                 documents = []
                 for pdf_item in pdf_files_to_process:
-                    # 💡 파일 처리 분기: 경로(str)인지, 업로드 객체인지 확인
                     if isinstance(pdf_item, str): 
                         loader = PyPDFLoader(pdf_item)
                         documents.extend(loader.load())
@@ -70,88 +62,82 @@ def extract_financials_via_rag(*args):
                         loader = PyPDFLoader(tmp_file_path)
                         documents.extend(loader.load())
                         os.remove(tmp_file_path)
-                    
+                
+                # 🚀 텍스트 분할 및 정제 (IndexError 방지 방탄 코드)
                 text_splitter = RecursiveCharacterTextSplitter(chunk_size=2000, chunk_overlap=200)
-                texts = text_splitter.split_documents(documents)
+                all_texts = text_splitter.split_documents(documents)
+                
+                # 내용이 비어있지 않고 특수문자가 정제된 조각만 남김
+                texts = []
+                for doc in all_texts:
+                    clean_content = doc.page_content.replace('\x00', '').strip()
+                    if len(clean_content) > 10: # 너무 짧은 조각은 임베딩 시 에러 유발 가능
+                        doc.page_content = clean_content
+                        texts.append(doc)
 
+                if not texts:
+                    st.error("⚠️ PDF에서 읽을 수 있는 텍스트가 없습니다. 파일 형식을 확인해주세요.")
+                    return None
+
+                # 🌟 벡터 저장소 구축
                 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2-preview")
-                vectorstore = Chroma.from_documents(texts, embeddings)
+                # 💡 개수가 안 맞아서 생기는 IndexError를 방지하기 위해 from_documents 대신 안전 필터링 거친 후 생성
+                vectorstore = Chroma.from_documents(documents=texts, embedding=embeddings)
                 
                 retriever = vectorstore.as_retriever(search_kwargs={"k": 5}) 
                 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
 
                 query = """
                 당신은 숙련된 퀀트 애널리스트입니다. 문서 전체를 뒤져 다음 재무 지표를 찾으세요.
-
-                [데이터 추출 가이드라인]
-                1. 무조건 연간(Annual, FY) 또는 4분기 누적(12M) 수치만 가져오세요. 2. 단일 분기(3M, 1Q, 2Q, 3Q) 숫자는 무시하세요.
-                3. 영업이익과 이자비용은 '기말' 시점의 연간 합산액을 찾으세요.
-                4. 부채비율은 '기말' 시점의 부채총계와 자본총계를 기준으로 하세요.
-                5. 숫자에 포함된 쉼표(,)나 단위는 제거하고 순수 숫자만 추출하세요.
-
-                JSON 형식으로만 응답하세요:
-                {
-                    "영업이익": 0,
-                    "이자비용": 0,
-                    "이자보상배율(배)": 0,
-                    "부채비율(%)": 0
-                }
+                1. 무조건 연간(Annual, FY) 또는 4분기 누적(12M) 수치만 가져오세요.
+                2. 영업이익, 이자비용, 부채비율을 정확히 추출하세요.
+                JSON 형식으로만 답변하세요:
+                {"영업이익": 0, "이자비용": 0, "이자보상배율(배)": 0, "부채비율(%)": 0}
                 """
                 
-                # 💡 배포 환경에서도 절대 에러 안 나는 직관적 RAG 방식
-                docs = retriever.invoke(query) # PDF에서 관련된 내용 5개 찾아오기
-                context_text = "\n\n".join([doc.page_content for doc in docs]) # 텍스트로 합치기
-
+                docs = retriever.invoke(query)
+                context_text = "\n\n".join([doc.page_content for doc in docs])
                 final_prompt = f"다음 [참고 문서]를 바탕으로 [질문]에 답하세요.\n\n[참고 문서]\n{context_text}\n\n[질문]\n{query}"
                 response = llm.invoke(final_prompt)
                 
-                result_text = response.content
-                
-                json_match = re.search(r'\{.*\}', result_text, re.DOTALL)
+                json_match = re.search(r'\{.*\}', response.content, re.DOTALL)
                 if json_match:
                     try:
                         pdf_data = json.loads(json_match.group())
                         for k, v in pdf_data.items():
-                            clean_v = str(v).replace(',', '').replace('%', '').strip()
-                            final_data[k] = float(clean_v)
-                    except:
-                        pass
+                            if k in final_data:
+                                clean_v = str(v).replace(',', '').replace('%', '').strip()
+                                final_data[k] = float(clean_v)
+                    except: pass
 
                 st.session_state["rag_df"] = pd.DataFrame([final_data])
 
         st.markdown("### 📊 분석 완료 (수동 수정 가능)")
-        st.info("💡 AI가 찾은 값을 확인하시고, 수정이 필요하면 변경 후 꼭 **[💾 AI 데이터 수정 및 DB 적용]** 버튼을 눌러주세요!")
-        
         edited_df = st.session_state["rag_df"].copy()
-        col1, col2 = st.columns(2)
         
+        col1, col2 = st.columns(2)
         with col1:
             op = st.number_input("연간 영업이익", value=float(edited_df.at[0, "영업이익"]))
             ie = st.number_input("연간 이자비용", value=float(edited_df.at[0, "이자비용"]))
-            edited_df.at[0, "영업이익"] = op
-            edited_df.at[0, "이자비용"] = ie
-            
         with col2:
             auto_icr = 0.0 if ie == 0 else round(op / ie, 2)
             st.number_input("이자보상배율(배) - 실시간 계산", value=auto_icr, disabled=True)
-            edited_df.at[0, "이자보상배율(배)"] = auto_icr
-            
             debt = st.number_input("부채비율(%)", value=float(edited_df.at[0, "부채비율(%)"]))
-            edited_df.at[0, "부채비율(%)"] = debt
+        
+        edited_df.at[0, "영업이익"] = op
+        edited_df.at[0, "이자비용"] = ie
+        edited_df.at[0, "이자보상배율(배)"] = auto_icr
+        edited_df.at[0, "부채비율(%)"] = debt
         
         st.table(edited_df)
-        st.session_state["rag_df"] = edited_df
-
-        st.markdown("---")
         if st.button("💾 AI 데이터 수정 및 DB 적용"):
             if 'DB' in st.session_state:
                 st.session_state.DB["op"] = op
                 st.session_state.DB["ie"] = ie
                 st.session_state.DB["debt"] = debt
-            st.success("✅ 수정한 AI 데이터가 메인 DB에 완벽하게 저장되었습니다!")
+            st.success("✅ 수정한 데이터가 메인 DB에 저장되었습니다!")
             
         return edited_df
-
     return None
 
 def get_company_list():
