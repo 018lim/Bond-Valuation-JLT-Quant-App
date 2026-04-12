@@ -81,8 +81,25 @@ def extract_financials_via_rag(*args):
 
                 # 🌟 벡터 저장소 구축
                 embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2-preview")
-                # 💡 개수가 안 맞아서 생기는 IndexError를 방지하기 위해 from_documents 대신 안전 필터링 거친 후 생성
-                vectorstore = Chroma.from_documents(documents=texts, embedding=embeddings)
+                
+                # 1. 텅 빈 벡터 저장소를 먼저 만듭니다.
+                vectorstore = Chroma(embedding_function=embeddings)
+                
+                # 2. 문서를 한꺼번에 넣지 않고, 하나씩(1개씩) 조심스럽게 밀어 넣습니다.
+                success_count = 0
+                for doc in texts:
+                    try:
+                        # 구글 API가 특정 조각을 거절하더라도 앱 전체가 터지지 않습니다.
+                        vectorstore.add_documents([doc])
+                        success_count += 1
+                    except Exception:
+                        # 에러가 난 조각(민감정보 오인 등)은 조용히 무시하고 넘어갑니다.
+                        pass
+                
+                # 3. 만약 모든 텍스트가 거부당했다면 에러 처리
+                if success_count == 0:
+                    st.error("⚠️ 구글 API 안전 필터 등에 의해 문서 분석이 거부되었습니다.")
+                    return None
                 
                 retriever = vectorstore.as_retriever(search_kwargs={"k": 5}) 
                 llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
